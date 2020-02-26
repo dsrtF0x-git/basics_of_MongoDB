@@ -2,6 +2,10 @@ const express = require("express");
 const router = new express.Router();
 const auth = require("../middleware/auth");
 const User = require("../models/user");
+const multer = require("multer");
+const sharp = require("sharp");
+const { sendWelcomeEmail, sendCancelationEmail } = require("../emails/account");
+
 
 router.delete("/users/me", auth, async (req, res) => {
 	try {
@@ -10,7 +14,7 @@ router.delete("/users/me", auth, async (req, res) => {
 		// if (!user) return res.status(404).send();
 
 		await req.user.remove();
-
+		sendCancelationEmail(req.user.email, req.user.name);
 		res.send(req.user);
 
 	} catch (error) {
@@ -23,6 +27,7 @@ router.post("/users", async (req, res) => {
 
 	try {
 		await user.save();
+		sendWelcomeEmail(user.email, user.name);
 		const token = await user.generateAuthToken();
 
 		res.status(201).send({ user, token });
@@ -112,6 +117,53 @@ router.patch("/users/me", auth, async (req, res) => {
 		res.send(req.user);
 	} catch (error) {
 		res.status(404).send(error);
+	}
+});
+
+const upload = multer({
+	limits: {
+		fileSize: 1000000
+	},
+	fileFilter(req, file, cb) {
+		// cb(new Error("File must be a PDF."));
+		// cb(undefined, true);
+		// cb(undefined, false);
+		if (!file.originalname.match(/\.(jpe?g|png)$/)) {
+			return cb(new Error("Please upload an image."));
+		}
+		cb(undefined, true);
+	}
+});
+
+router.delete("/users/me/avatar", auth, async (req, res) => {
+	req.user.avatar = undefined;
+	await req.user.save();
+	res.send(200);
+});
+
+router.post("/users/me/avatar", auth, upload.single("avatar"), async (req, res) => {
+	const buffer = await sharp(req.file.buffer).resize({ 
+		width: 250,
+		height: 250
+	 }).png().toBuffer();
+	req.user.avatar = buffer;
+	await req.user.save();
+	res.send();
+}, (error, req, res, next) => {
+	res.status(400).send({ error: error.message });
+});
+
+router.get("/users/:id/avatar", async (req, res) => {
+	try {
+		const user = await User.findById(req.params.id);
+
+		if (!user || !user.avatar) {
+			throw new Error();
+		}
+		res.set("Content-Type", "image/png");
+		res.send(user.avatar);
+	} catch (error) {
+		res.status(404).send();
 	}
 });
 
